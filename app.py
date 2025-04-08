@@ -1,4 +1,0 @@
-main
-import pyautogui
-=======
- main
