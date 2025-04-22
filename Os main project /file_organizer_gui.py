@@ -5,12 +5,6 @@ import threading
 import ctypes  
 
 import datetime
-import os
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import threading
-import ctypes  
-
 
 
 lib = ctypes.CDLL('./file_organizer_backend.so')
