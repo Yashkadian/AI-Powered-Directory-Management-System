@@ -1,0 +1,1 @@
+g++ -shared -o file_organizer_backend.dll file_organizer_backend.cpp -lstdc++fs -std=c++17
