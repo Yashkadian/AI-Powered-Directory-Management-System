@@ -6,10 +6,10 @@
 #include <cstring>
 #include <map>
 #include <chrono>
-#include <algorithm>  // Added for std::find
+#include <algorithm>  
 
 extern "C" {
-    // Function to get directory contents
+   
     char** get_directory_contents(const char* directory_path) {
         std::vector<std::string> files;
         try {
@@ -19,20 +19,20 @@ extern "C" {
                 }
             }
         } catch (...) {
-            return nullptr;  // Return null on error
+            return nullptr;  
         }
 
-        // Allocate memory for the result
+        
         char** result = (char**)malloc((files.size() + 1) * sizeof(char*));
         for (size_t i = 0; i < files.size(); ++i) {
             result[i] = (char*)malloc((files[i].size() + 1) * sizeof(char));
             strcpy(result[i], files[i].c_str());
         }
-        result[files.size()] = nullptr;  // Null-terminate the array
+        result[files.size()] = nullptr;  
         return result;
     }
 
-    // Function to copy a file
+    
     bool copy_file(const char* src, const char* dest) {
         try {
             std::filesystem::copy(src, dest, std::filesystem::copy_options::overwrite_existing);
@@ -42,7 +42,7 @@ extern "C" {
         }
     }
 
-    // Function to move a file
+    
     bool move_file(const char* src, const char* dest) {
         try {
             std::filesystem::rename(src, dest);
@@ -52,7 +52,7 @@ extern "C" {
         }
     }
 
-    // Function to delete a file or directory
+    
     bool delete_file(const char* path) {
         try {
             std::filesystem::remove_all(path);
@@ -62,13 +62,13 @@ extern "C" {
         }
     }
 
-    // Function to organize files by date
+    
     bool organize_by_date(const char* directory) {
         try {
             for (const auto& entry : std::filesystem::directory_iterator(directory)) {
                 if (entry.is_regular_file()) {
                     auto modified_time = entry.last_write_time();
-                    // Convert file_time_type to time_t using alternative method
+                    
                     auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
                         modified_time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
                     std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
@@ -89,7 +89,7 @@ extern "C" {
         }
     }
 
-    // Function to organize files by type
+    
     bool organize_by_type(const char* directory) {
         try {
             std::map<std::string, std::vector<std::string>> categories = {
