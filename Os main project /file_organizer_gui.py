@@ -2,9 +2,176 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
-import ctypes  # For interfacing with the C/C++ backend
+import ctypes  
 
 import datetime
+import os
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import threading
+import ctypes  
+
+
+
+lib = ctypes.CDLL('./file_organizer_backend.so')
+
+
+lib.get_directory_contents.argtypes = [ctypes.c_char_p]
+lib.get_directory_contents.restype = ctypes.POINTER(ctypes.c_char_p)
+
+lib.copy_file.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+lib.copy_file.restype = ctypes.c_bool
+
+lib.move_file.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+lib.move_file.restype = ctypes.c_bool
+
+lib.delete_file.argtypes = [ctypes.c_char_p]
+lib.delete_file.restype = ctypes.c_bool
+
+lib.organize_by_date.argtypes = [ctypes.c_char_p]
+lib.organize_by_date.restype = ctypes.c_bool
+
+lib.organize_by_type.argtypes = [ctypes.c_char_p]
+lib.organize_by_type.restype = ctypes.c_bool
+
+class FileOrganizerApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("File Organizer")
+        self.root.geometry("1200x700")
+        self.root.minsize(800, 600)
+
+        
+
+    
+    def _load_directory_thread(self, directory):
+        try:
+            result = lib.get_directory_contents(directory.encode('utf-8'))
+            if not result:
+                raise Exception("Failed to load directory contents")
+
+            files = []
+            i = 0
+            while result[i]:
+                file_path = result[i].decode('utf-8')
+                stats = os.stat(file_path)
+                is_dir = os.path.isdir(file_path)
+                file_info = {
+                    "name": os.path.basename(file_path),
+                    "path": file_path,
+                    "size": stats.st_size if not is_dir else 0,
+                    "created": stats.st_ctime,
+                    "modified": stats.st_mtime,
+                    "is_dir": is_dir
+                }
+                files.append(file_info)
+                i += 1
+
+            self.files = files
+            self.filter_and_sort_files()
+            self.root.after(0, self.display_files)
+            self.root.after(0, lambda: self.update_status(f"Loaded {len(self.files)} items"))
+            self.root.after(0, lambda: self.file_count_label.config(text=f"{len(self.filtered_files)} items"))
+        except Exception as e:
+            self.root.after(0, lambda: self.update_status(f"Error: {str(e)}"))
+
+    def copy_file(self):
+        if self.selected_file is None:
+            messagebox.showinfo("Info", "No file selected")
+            return
+        file_info = self.selected_file
+        destination = filedialog.askdirectory(title="Select Destination Folder")
+        if not destination:
+            return
+        try:
+            src = file_info["path"].encode('utf-8')
+            dest = os.path.join(destination, file_info["name"]).encode('utf-8')
+            success = lib.copy_file(src, dest)
+            if success:
+                self.update_status(f"Copied {file_info['name']} to {destination}")
+                messagebox.showinfo("Success", f"File copied successfully to {destination}")
+            else:
+                messagebox.showerror("Error", "Failed to copy file")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not copy file: {str(e)}")
+
+    def move_file(self):
+        if self.selected_file is None:
+            messagebox.showinfo("Info", "No file selected")
+            return
+        file_info = self.selected_file
+        destination = filedialog.askdirectory(title="Select Destination Folder")
+        if not destination:
+            return
+        try:
+            src = file_info["path"].encode('utf-8')
+            dest = os.path.join(destination, file_info["name"]).encode('utf-8')
+            success = lib.move_file(src, dest)
+            if success:
+                self.update_status(f"Moved {file_info['name']} to {destination}")
+                messagebox.showinfo("Success", f"File moved successfully to {destination}")
+                self.load_directory(self.current_dir)
+            else:
+                messagebox.showerror("Error", "Failed to move file")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not move file: {str(e)}")
+
+    def delete_file(self):
+        if self.selected_file is None:
+            messagebox.showinfo("Info", "No file selected")
+            return
+        file_info = self.selected_file
+        if not messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete {file_info['name']}?"):
+            return
+        try:
+            path = file_info["path"].encode('utf-8')
+            success = lib.delete_file(path)
+            if success:
+                self.update_status(f"Deleted {file_info['name']}")
+                self.load_directory(self.current_dir)
+            else:
+                messagebox.showerror("Error", "Failed to delete file")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not delete file: {str(e)}")
+
+    def organize_by_date(self):
+        destination = filedialog.askdirectory(title="Select Destination Folder (leave empty to organize in place)")
+        if destination == "":
+            destination = self.current_dir
+        if not messagebox.askyesno("Confirm Organization",
+                                  f"Are you sure you want to organize files by date in {destination}?"):
+            return
+        try:
+            success = lib.organize_by_date(destination.encode('utf-8'))
+            if success:
+                messagebox.showinfo("Success", f"Files organized by date in {destination}")
+                if destination == self.current_dir:
+                    self.load_directory(self.current_dir)
+                self.update_status(f"Organized files by date in {destination}")
+            else:
+                messagebox.showerror("Error", "Failed to organize files by date")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not organize files: {str(e)}")
+
+    def organize_by_type(self):
+        destination = filedialog.askdirectory(title="Select Destination Folder (leave empty to organize in place)")
+        if destination == "":
+            destination = self.current_dir
+        if not messagebox.askyesno("Confirm Organization",
+                                  f"Are you sure you want to organize files by type in {destination}?"):
+            return
+        try:
+            success = lib.organize_by_type(destination.encode('utf-8'))
+            if success:
+                messagebox.showinfo("Success", f"Files organized by type in {destination}")
+                if destination == self.current_dir:
+                    self.load_directory(self.current_dir)
+                self.update_status(f"Organized files by type in {destination}")
+            else:
+                messagebox.showerror("Error", "Failed to organize files by type")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not organize files: {str(e)}")
+
 
 class FileOrganizerApp:
         def __init__(self, root):
@@ -13,7 +180,7 @@ class FileOrganizerApp:
             self.root.geometry("1200x700")
             self.root.minsize(800, 600)
 
-            # Theme colors - Updated with more modern colors
+           
             self.themes = {
                 "light": {
                     "primary": "#4361ee",  # Modern blue
@@ -45,11 +212,11 @@ class FileOrganizerApp:
                 }
             }
             self.current_theme = "light"
-            self.selected_file = None  # Initialize selected_file
-            self.cancel_operation = False  # Flag for cancelling operations
-            self.thumbnail_cache = {}  # Cache for thumbnails
+            self.selected_file = None  
+            self.cancel_operation = False 
+            self.thumbnail_cache = {}  
 
-            # File categories with extensions
+            
             self.file_categories = {
                 "Images": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"],
                 "Videos": [".mp4", ".avi", ".mov", ".wmv", ".flv", ".mkv", ".webm"],
@@ -64,31 +231,31 @@ class FileOrganizerApp:
                 "Others": []
             }
 
-            # Current directory and files
+            
             self.current_dir = os.path.expanduser("~")
             self.files = []
             self.filtered_files = []
             self.current_category = "All"
             self.current_sort = "Name (A-Z)"
 
-            # Apply theme
+            
             self.apply_theme()
 
-            # Create UI
+           
             self.create_ui()
 
-            # Load initial directory using the backend
+            
             self.load_directory(self.current_dir)
 
         def apply_theme(self):
             theme = self.themes[self.current_theme]
             self.root.configure(bg=theme["background"])
 
-            # Create styles for ttk widgets
+           
             style = ttk.Style()
             style.theme_use("clam")
 
-            # Configure styles for different widgets
+            
             style.configure("TFrame", background=theme["background"])
             style.configure("TButton", 
                             background=theme["primary"], 
@@ -135,57 +302,57 @@ class FileOrganizerApp:
                             troughcolor=theme["background"])
 
         def create_ui(self):
-            # Main frame
+           
             self.main_frame = ttk.Frame(self.root)
             self.main_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
 
-            # Top bar with path and controls
+            
             self.top_bar = ttk.Frame(self.main_frame)
             self.top_bar.pack(fill=tk.X, pady=(0, 16))
 
-            # Path navigation
+            
             self.back_button = ttk.Button(self.top_bar, text="←", width=3, command=self.go_back)
             self.back_button.pack(side=tk.LEFT, padx=(0, 8))
             self.path_label = ttk.Label(self.top_bar, text=self.current_dir, style="Path.TLabel")
             self.path_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 16))
 
-            # Browse button
+            
             self.browse_button = ttk.Button(self.top_bar, text="Browse", command=self.browse_directory)
             self.browse_button.pack(side=tk.LEFT, padx=(0, 16))
 
-            # Theme toggle - Modern icon-only button
+            
             theme_icon = "🌙" if self.current_theme == "light" else "☀️"
             self.theme_button = ttk.Button(self.top_bar, text=theme_icon, width=3, command=self.toggle_theme)
             self.theme_button.pack(side=tk.RIGHT)
 
-            # Content area with sidebar and main content
+          
             self.content_frame = ttk.Frame(self.main_frame)
             self.content_frame.pack(fill=tk.BOTH, expand=True)
 
-            # Sidebar with categories
+            
             self.sidebar = ttk.Frame(self.content_frame, width=200)
             self.sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 16))
             self.sidebar.pack_propagate(False)
 
-            # Categories title
+            
             ttk.Label(self.sidebar, text="Categories", style="Title.TLabel").pack(anchor=tk.W, pady=(0, 16))
 
-            # Add "All" category
+            
             self.create_category_button("All", True)
 
-            # Add file categories
+            
             for category in self.file_categories:
                 self.create_category_button(category)
 
-            # Main content area
+           
             self.content_area = ttk.Frame(self.content_frame)
             self.content_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-            # Controls bar (sorting, organizing options)
+            
             self.controls_bar = ttk.Frame(self.content_area)
             self.controls_bar.pack(fill=tk.X, pady=(0, 16))
 
-            # Sort options
+           
             ttk.Label(self.controls_bar, text="Sort by:").pack(side=tk.LEFT, padx=(0, 8))
             self.sort_options = ["Name (A-Z)", "Name (Z-A)", "Date (Newest)", "Date (Oldest)", "Size (Largest)", "Size (Smallest)"]
             self.sort_var = tk.StringVar(value=self.sort_options[0])
@@ -193,7 +360,7 @@ class FileOrganizerApp:
             self.sort_combo.pack(side=tk.LEFT, padx=(0, 16))
             self.sort_combo.bind("<<ComboboxSelected>>", self.on_sort_change)
 
-            # Organize buttons
+            
             self.organize_by_date_button = ttk.Button(self.controls_bar, text="Organize by Date", 
                                                     command=self.organize_by_date, style="Success.TButton")
             self.organize_by_date_button.pack(side=tk.RIGHT, padx=(8, 0))
@@ -201,26 +368,26 @@ class FileOrganizerApp:
                                                     command=self.organize_by_type, style="Success.TButton")
             self.organize_by_type_button.pack(side=tk.RIGHT)
 
-            # Files display area (scrollable)
+           
             self.files_canvas = tk.Canvas(self.content_area, bg=self.themes[self.current_theme]["background"], 
                                         highlightthickness=0)
             self.files_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-            # Scrollbar
+           
             self.scrollbar = ttk.Scrollbar(self.content_area, orient=tk.VERTICAL, command=self.files_canvas.yview)
             self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             self.files_canvas.configure(yscrollcommand=self.scrollbar.set)
 
-            # Frame for files inside canvas
+            
             self.files_frame = ttk.Frame(self.files_canvas)
             self.files_canvas_window = self.files_canvas.create_window((0, 0), window=self.files_frame, anchor=tk.NW)
 
-            # Configure canvas scrolling
+           
             self.files_frame.bind("<Configure>", self.on_frame_configure)
             self.files_canvas.bind("<Configure>", self.on_canvas_configure)
             self.files_canvas.bind_all("<MouseWheel>", self.on_mousewheel)
 
-            # Status bar
+         
             self.status_bar = ttk.Frame(self.main_frame)
             self.status_bar.pack(fill=tk.X, pady=(16, 0))
             self.status_label = ttk.Label(self.status_bar, text="Ready")
@@ -228,7 +395,7 @@ class FileOrganizerApp:
             self.file_count_label = ttk.Label(self.status_bar, text="0 items")
             self.file_count_label.pack(side=tk.RIGHT)
 
-            # Context menu
+           
             self.context_menu = tk.Menu(self.root, tearoff=0)
             self.context_menu.add_command(label="Open", command=lambda: self.open_file())
             self.context_menu.add_command(label="Details", command=self.show_details)
@@ -239,7 +406,7 @@ class FileOrganizerApp:
             self.context_menu.add_separator()
             self.context_menu.add_command(label="Locate in Explorer", command=self.locate_in_explorer)
 
-            # Tooltip
+            
             self.tooltip = tk.Label(self.root, text="", bg="#ffffcc", relief="solid", borderwidth=1)
             self.tooltip.place_forget()
 
@@ -248,11 +415,11 @@ class FileOrganizerApp:
             frame = ttk.Frame(self.sidebar)
             frame.pack(fill=tk.X, pady=4)
 
-            # Use lambda to pass the category name to the click handler
+           
             frame.bind("<Button-1>", lambda e, cat=category: self.select_category(cat))
 
-            # Add category icon based on category name
-            icon_text = "📁"  # Default folder icon
+           
+            icon_text = "📁"  
             if category == "Images":
                 icon_text = "🖼️"
             elif category == "Videos":
@@ -281,46 +448,46 @@ class FileOrganizerApp:
             label.pack(side=tk.LEFT, padx=(0, 8), pady=4)
             label.bind("<Button-1>", lambda e, cat=category: self.select_category(cat))
 
-            # Store reference to highlight the selected category
+            
             if is_all:
                 self.selected_category_label = label
                 self.selected_category_frame = frame
 
         def select_category(self, category):
-            # Update selected category
+           
             self.current_category = category
-            # Filter files based on category
+           
             self.filter_and_sort_files()
-            # Update UI
+            
             self.display_files()
-            # Update status
+           
             self.update_status(f"Category: {category}")
 
         def on_sort_change(self, event):
-            # Get selected sort option
+           
             self.current_sort = self.sort_var.get()
-            # Re-sort files
+           
             self.filter_and_sort_files()
-            # Update UI
+          
             self.display_files()
-            # Update status
+            
             self.update_status(f"Sorted by: {self.current_sort}")
 
         def filter_and_sort_files(self):
-            # Filter files by category
+           
             if self.current_category == "All":
                 self.filtered_files = self.files.copy()
             else:
                 extensions = self.file_categories.get(self.current_category, [])
-                if extensions:  # If specific extensions are defined
+                if extensions:  
                     self.filtered_files = [f for f in self.files if os.path.splitext(f["name"])[1].lower() in extensions]
-                else:  # For "Others" category or any without specific extensions
+                else:  
                     all_extensions = []
                     for exts in self.file_categories.values():
                         all_extensions.extend(exts)
                     self.filtered_files = [f for f in self.files if os.path.splitext(f["name"])[1].lower() not in all_extensions]
 
-            # Sort files
+           
             if self.current_sort == "Name (A-Z)":
                 self.filtered_files.sort(key=lambda x: x["name"].lower())
             elif self.current_sort == "Name (Z-A)":
@@ -335,22 +502,22 @@ class FileOrganizerApp:
                 self.filtered_files.sort(key=lambda x: x["size"])
 
         def load_directory(self, directory):
-            # Update current directory
+            
             self.current_dir = directory
             self.path_label.config(text=directory)
-            # Clear existing files
+            
             self.files = []
 
-            # Show loading status
+            
             self.update_status("Loading files...")
 
-            # Call the C/C++ backend to load directory contents
+            
             threading.Thread(target=self._load_directory_backend, args=(directory,), daemon=True).start()
 
         def _load_directory_backend(self, directory):
             try:
-                # Call the C/C++ shared library to get directory contents
-                lib = ctypes.CDLL('./file_organizer_backend.so')  # Path to compiled C/C++ library
+                
+                lib = ctypes.CDLL('./file_organizer_backend.so')  
                 lib.get_directory_contents.argtypes = [ctypes.c_char_p]
                 lib.get_directory_contents.restype = ctypes.POINTER(ctypes.c_char_p)
 
@@ -358,7 +525,7 @@ class FileOrganizerApp:
                 if not result:
                     raise Exception("Failed to load directory contents")
 
-                # Process the result (assuming it's a list of file paths)
+                
                 files = []
                 i = 0
                 while result[i]:
@@ -366,13 +533,13 @@ class FileOrganizerApp:
                     files.append(file_path)
                     i += 1
 
-                # Convert to Python-friendly file info
+                
                 self.files = self._process_backend_files(files)
 
-                # Filter and sort files
+               
                 self.filter_and_sort_files()
 
-                # Update UI in main thread
+                
                 self.root.after(0, self.display_files)
                 self.root.after(0, lambda: self.update_status(f"Loaded {len(self.files)} items"))
                 self.root.after(0, lambda: self.file_count_label.config(text=f"{len(self.filtered_files)} items"))
@@ -380,7 +547,7 @@ class FileOrganizerApp:
                 self.root.after(0, lambda: self.update_status(f"Error: {str(e)}"))
 
         def _process_backend_files(self, files):
-            # Convert raw file paths to structured file info
+            
             processed_files = []
             for file_path in files:
                 stats = os.stat(file_path)
@@ -397,20 +564,20 @@ class FileOrganizerApp:
             return processed_files
 
         def display_files(self):
-            # Clear existing files display
+            
             for widget in self.files_frame.winfo_children():
                 widget.destroy()
 
-            # Calculate grid layout based on canvas width
+            
             canvas_width = self.files_canvas.winfo_width()
             tile_width = 120
             padding = 16
             cols = max(1, (canvas_width - padding) // (tile_width + padding))
             theme = self.themes[self.current_theme]
 
-            # Check if directory is empty
+            
             if not self.filtered_files:
-                # Create empty folder message
+                
                 empty_frame = tk.Frame(self.files_frame, bg=theme["background"])
                 empty_frame.pack(expand=True, fill=tk.BOTH, pady=50)
                 empty_icon = tk.Label(empty_frame, text="📂", font=("Segoe UI", 48), 
@@ -424,66 +591,65 @@ class FileOrganizerApp:
                 empty_subtext.pack(pady=(5, 20))
                 return
 
-            # Create file tiles
+           
             row, col = 0, 0
             for file_info in self.filtered_files:
-                # Create file tile frame with border
+               
                 tile_frame = tk.Frame(self.files_frame, width=tile_width, height=150, 
                                     bg=theme["card"], bd=1, relief=tk.SOLID, 
                                     highlightbackground=theme["border"], highlightthickness=1)
                 tile_frame.grid(row=row, column=col, padx=padding//2, pady=padding//2, sticky="nsew")
                 tile_frame.pack_propagate(False)
 
-                # Bind events
+               
                 tile_frame.bind("<Button-1>", lambda e, f=file_info: self.select_file(f))
                 tile_frame.bind("<Double-Button-1>", lambda e, f=file_info: self.open_file(f))
                 tile_frame.bind("<Button-3>", lambda e, f=file_info: self.show_context_menu(e, f))
                 tile_frame.bind("<Enter>", lambda e, frame=tile_frame, f=file_info: self.on_tile_hover(frame, f, True))
                 tile_frame.bind("<Leave>", lambda e, frame=tile_frame, f=file_info: self.on_tile_hover(frame, False))
 
-                # File icon or thumbnail
+                
                 if file_info["is_dir"]:
                     icon_label = tk.Label(tile_frame, text="📁", font=("Segoe UI", 32), bg=theme["card"], fg=theme["primary"])
                     icon_label.pack(pady=(16, 8))
                 else:
-                    # Determine file type
+                   
                     ext = os.path.splitext(file_info["name"])[1].lower()
-                    # Check if it's an image or video for thumbnail
+                    
                     if ext in self.file_categories["Images"]:
-                        # Create a frame for the thumbnail
+                       
                         thumb_frame = tk.Frame(tile_frame, width=80, height=80, bg=theme["card"])
                         thumb_frame.pack(pady=(16, 8))
                         thumb_frame.pack_propagate(False)
-                        # Try to load thumbnail
+                       
                         try:
-                            # Check if thumbnail is in cache
+                        
                             if file_info["path"] in self.thumbnail_cache:
                                 thumbnail = self.thumbnail_cache[file_info["path"]]
                             else:
-                                # Generate thumbnail
+                               
                                 img = Image.open(file_info["path"])
                                 img.thumbnail((80, 80))
                                 thumbnail = ImageTk.PhotoImage(img)
-                                # Cache the thumbnail
+                                
                                 self.thumbnail_cache[file_info["path"]] = thumbnail
-                            # Display thumbnail
+                            
                             thumb_label = tk.Label(thumb_frame, image=thumbnail, bg=theme["card"])
-                            thumb_label.image = thumbnail  # Keep a reference
+                            thumb_label.image = thumbnail  
                             thumb_label.pack(fill=tk.BOTH, expand=True)
                         except Exception:
-                            # If thumbnail generation fails, show default icon
+                         
                             icon_label = tk.Label(thumb_frame, text="🖼️", font=("Segoe UI", 32), 
                                                 bg=theme["card"], fg=theme["text"])
                             icon_label.pack(fill=tk.BOTH, expand=True)
                     elif ext in self.file_categories["Videos"]:
-                        # For videos, just show a video icon for now
-                        # In a more advanced version, we could generate video thumbnails
+                        
                         icon_label = tk.Label(tile_frame, text="🎬", font=("Segoe UI", 32), 
                                             bg=theme["card"], fg=theme["text"])
                         icon_label.pack(pady=(16, 8))
                     else:
-                        # Set icon based on file type
-                        icon_text = "📄"  # Default file icon
+                        
+                        icon_text = "📄" 
                         if ext in self.file_categories["Audio"]:
                             icon_text = "🎵"
                         elif ext in self.file_categories["Documents"]:
@@ -500,7 +666,7 @@ class FileOrganizerApp:
                                             bg=theme["card"], fg=theme["text"])
                         icon_label.pack(pady=(16, 8))
 
-                # File name (truncated if too long)
+                
                 name = file_info["name"]
                 display_name = name
                 if len(name) > 15:
@@ -509,7 +675,7 @@ class FileOrganizerApp:
                                     font=("Segoe UI", 9), wraplength=tile_width-10)
                 name_label.pack(pady=(0, 8))
 
-                # Bind events to all elements
+                
                 for widget in tile_frame.winfo_children():
                     widget.bind("<Button-1>", lambda e, f=file_info: self.select_file(f))
                     widget.bind("<Double-Button-1>", lambda e, f=file_info: self.open_file(f))
@@ -517,52 +683,39 @@ class FileOrganizerApp:
                     widget.bind("<Enter>", lambda e, frame=tile_frame, f=file_info: self.on_tile_hover(frame, f, True))
                     widget.bind("<Leave>", lambda e, frame=tile_frame, f=file_info: self.on_tile_hover(frame, False))
 
-                # Update grid position
                 col += 1
                 if col >= cols:
                     col = 0
                     row += 1
 
-            # Update canvas scroll region
             self.files_frame.update_idletasks()
             self.files_canvas.config(scrollregion=self.files_canvas.bbox("all"))
 
         def on_tile_hover(self, frame, file_info=None, is_hover=True):
             theme = self.themes[self.current_theme]
-            # Update frame background
             frame.config(bg=theme["hover"] if is_hover else theme["card"])
-            # Update all child widgets' background
             for widget in frame.winfo_children():
                 if isinstance(widget, tk.Frame):
-                    # If it's a frame (like thumbnail frame), update its children too
                     for child in widget.winfo_children():
                         child.config(bg=theme["hover"] if is_hover else theme["card"])
                 widget.config(bg=theme["hover"] if is_hover else theme["card"])
-            # Show tooltip with full filename on hover
             if is_hover and file_info:
-                # Position tooltip near the cursor
                 x, y = self.root.winfo_pointerxy()
                 x_rel = x - self.root.winfo_rootx() + 15
                 y_rel = y - self.root.winfo_rooty() + 10
-                # Set tooltip text and show it
                 self.tooltip.config(text=file_info["name"])
                 self.tooltip.place(x=x_rel, y=y_rel)
             else:
-                # Hide tooltip when not hovering
                 self.tooltip.place_forget()
 
         def on_frame_configure(self, event):
-            # Update the scrollregion to encompass the inner frame
             self.files_canvas.configure(scrollregion=self.files_canvas.bbox("all"))
 
         def on_canvas_configure(self, event):
-            # Update the width of the window to fill the canvas
             self.files_canvas.itemconfig(self.files_canvas_window, width=event.width)
-            # Redisplay files to adjust grid layout
             self.display_files()
 
         def on_mousewheel(self, event):
-            # Scroll the canvas with the mousewheel
             self.files_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         def update_status(self, message):
@@ -575,24 +728,18 @@ class FileOrganizerApp:
 
         def go_back(self):
             parent_dir = os.path.dirname(self.current_dir)
-            if parent_dir != self.current_dir:  # Avoid going back from root
+            if parent_dir != self.current_dir:  
                 self.load_directory(parent_dir)
 
         def toggle_theme(self):
-            # Toggle theme
             self.current_theme = "dark" if self.current_theme == "light" else "light"
-            # Update theme button icon
             theme_icon = "🌙" if self.current_theme == "light" else "☀️"
             self.theme_button.config(text=theme_icon)
-            # Apply theme
             self.apply_theme()
-            # Redisplay files with new theme
             self.display_files()
 
         def select_file(self, file_info):
-            # Store selected file
             self.selected_file = file_info
-            # Update status
             self.update_status(f"Selected: {file_info['name']}")
 
         def open_file(self, file_info=None):
@@ -603,22 +750,18 @@ class FileOrganizerApp:
                 file_info = self.selected_file
             try:
                 if file_info["is_dir"]:
-                    # Open directory
                     self.load_directory(file_info["path"])
                 else:
-                    # Open file with default application
-                    if os.name == "nt":  # Windows
+                    if os.name == "nt":  
                         os.startfile(file_info["path"])
-                    elif os.name == "posix":  # macOS and Linux
+                    elif os.name == "posix":  
                         os.system(f"xdg-open '{file_info['path']}'")
                     self.update_status(f"Opened {file_info['name']}")
             except Exception as e:
                 messagebox.showerror("Error", f"Could not open file: {str(e)}")
 
         def show_context_menu(self, event, file_info):
-            # Store selected file
             self.selected_file = file_info
-            # Show context menu at the position of the event
             self.context_menu.post(event.x_root, event.y_root)
 
         def show_details(self):
@@ -627,7 +770,6 @@ class FileOrganizerApp:
                 return
             file_info = self.selected_file
             theme = self.themes[self.current_theme]
-            # Create details window
             details_window = tk.Toplevel(self.root)
             details_window.title(f"Details: {file_info['name']}")
             details_window.geometry("450x350")
@@ -641,11 +783,9 @@ class FileOrganizerApp:
                                 bg=theme["primary"], fg="white")
             header_label.pack(pady=15)
 
-            # Details content
             content_frame = tk.Frame(details_window, bg=theme["background"], padx=20, pady=20)
             content_frame.pack(fill=tk.BOTH, expand=True)
 
-            # File icon
             if file_info["is_dir"]:
                 icon_text = "📁"
             else:
@@ -671,59 +811,50 @@ class FileOrganizerApp:
                                 bg=theme["background"], fg=theme["primary"])
             icon_label.grid(row=0, column=0, rowspan=3, padx=(0, 20), sticky="n")
 
-            # File name
             tk.Label(content_frame, text="Name:", font=("Segoe UI", 10, "bold"),
                 bg=theme["background"], fg=theme["text"]).grid(row=0, column=1, sticky=tk.W, pady=4)
             tk.Label(content_frame, text=file_info["name"], font=("Segoe UI", 10),
                 bg=theme["background"], fg=theme["text"]).grid(row=0, column=2, sticky=tk.W, pady=4)
 
-            # File path
             tk.Label(content_frame, text="Path:", font=("Segoe UI", 10, "bold"),
                 bg=theme["background"], fg=theme["text"]).grid(row=1, column=1, sticky=tk.W, pady=4)
             path_label = tk.Label(content_frame, text=file_info["path"], font=("Segoe UI", 10),
                                 bg=theme["background"], fg=theme["text"], wraplength=250)
             path_label.grid(row=1, column=2, sticky=tk.W, pady=4)
 
-            # File type
             file_type = "Folder" if file_info["is_dir"] else os.path.splitext(file_info["name"])[1].upper()[1:] + " File"
             tk.Label(content_frame, text="Type:", font=("Segoe UI", 10, "bold"),
                 bg=theme["background"], fg=theme["text"]).grid(row=2, column=1, sticky=tk.W, pady=4)
             tk.Label(content_frame, text=file_type, font=("Segoe UI", 10),
                 bg=theme["background"], fg=theme["text"]).grid(row=2, column=2, sticky=tk.W, pady=4)
 
-            # File size
             size_str = "N/A" if file_info["is_dir"] else self.format_size(file_info["size"])
             tk.Label(content_frame, text="Size:", font=("Segoe UI", 10, "bold"),
                 bg=theme["background"], fg=theme["text"]).grid(row=3, column=1, sticky=tk.W, pady=4)
             tk.Label(content_frame, text=size_str, font=("Segoe UI", 10),
                 bg=theme["background"], fg=theme["text"]).grid(row=3, column=2, sticky=tk.W, pady=4)
 
-            # Created date
             created_str = datetime.datetime.fromtimestamp(file_info["created"]).strftime("%Y-%m-%d %H:%M:%S")
             tk.Label(content_frame, text="Created:", font=("Segoe UI", 10, "bold"),
                 bg=theme["background"], fg=theme["text"]).grid(row=4, column=1, sticky=tk.W, pady=4)
             tk.Label(content_frame, text=created_str, font=("Segoe UI", 10),
                 bg=theme["background"], fg=theme["text"]).grid(row=4, column=2, sticky=tk.W, pady=4)
 
-            # Modified date
             modified_str = datetime.datetime.fromtimestamp(file_info["modified"]).strftime("%Y-%m-%d %H:%M:%S")
             tk.Label(content_frame, text="Modified:", font=("Segoe UI", 10, "bold"),
                 bg=theme["background"], fg=theme["text"]).grid(row=5, column=1, sticky=tk.W, pady=4)
             tk.Label(content_frame, text=modified_str, font=("Segoe UI", 10),
                 bg=theme["background"], fg=theme["text"]).grid(row=5, column=2, sticky=tk.W, pady=4)
 
-            # Button frame
             button_frame = tk.Frame(details_window, bg=theme["background"], pady=15)
             button_frame.pack(fill=tk.X)
 
-            # Close button
             close_button = tk.Button(button_frame, text="Close", font=("Segoe UI", 10),
                                 bg=theme["primary"], fg="white", bd=0, padx=15, pady=8,
                                 command=details_window.destroy)
             close_button.pack()
 
         def format_size(self, size_bytes):
-            # Format file size in human-readable format
             if size_bytes < 1024:
                 return f"{size_bytes} B"
             elif size_bytes < 1024 * 1024:
@@ -740,17 +871,14 @@ class FileOrganizerApp:
                 messagebox.showinfo("Info", "No file selected")
                 return
             file_info = self.selected_file
-            # Ask for destination
             destination = filedialog.askdirectory(title="Select Destination Folder")
             if not destination:
                 return
-            # Copy file using the C/C++ backend
             threading.Thread(target=self._copy_file_backend, args=(file_info, destination), daemon=True).start()
 
         def _copy_file_backend(self, file_info, destination):
             try:
-                # Call the C/C++ shared library to copy the file
-                lib = ctypes.CDLL('./file_organizer_backend.so')  # Path to compiled C/C++ library
+                lib = ctypes.CDLL('./file_organizer_backend.so')  
                 lib.copy_file.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
                 lib.copy_file.restype = ctypes.c_bool
 
@@ -771,17 +899,14 @@ class FileOrganizerApp:
                 messagebox.showinfo("Info", "No file selected")
                 return
             file_info = self.selected_file
-            # Ask for destination
             destination = filedialog.askdirectory(title="Select Destination Folder")
             if not destination:
                 return
-            # Move file using the C/C++ backend
             threading.Thread(target=self._move_file_backend, args=(file_info, destination), daemon=True).start()
 
         def _move_file_backend(self, file_info, destination):
             try:
-                # Call the C/C++ shared library to move the file
-                lib = ctypes.CDLL('./file_organizer_backend.so')  # Path to compiled C/C++ library
+                lib = ctypes.CDLL('./file_organizer_backend.so')  
                 lib.move_file.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
                 lib.move_file.restype = ctypes.c_bool
 
@@ -792,7 +917,6 @@ class FileOrganizerApp:
                 if success:
                     self.root.after(0, lambda: messagebox.showinfo("Success", f"File moved successfully to {destination}"))
                     self.root.after(0, lambda: self.update_status(f"Moved {file_info['name']} to {destination}"))
-                    # Refresh current directory
                     self.root.after(0, lambda: self.load_directory(self.current_dir))
                 else:
                     self.root.after(0, lambda: messagebox.showerror("Error", "Failed to move file"))
@@ -804,16 +928,13 @@ class FileOrganizerApp:
                 messagebox.showinfo("Info", "No file selected")
                 return
             file_info = self.selected_file
-            # Confirm deletion
             if not messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete {file_info['name']}?"):
                 return
-            # Delete file using the C/C++ backend
             threading.Thread(target=self._delete_file_backend, args=(file_info,), daemon=True).start()
 
         def _delete_file_backend(self, file_info):
             try:
-                # Call the C/C++ shared library to delete the file
-                lib = ctypes.CDLL('./file_organizer_backend.so')  # Path to compiled C/C++ library
+                lib = ctypes.CDLL('./file_organizer_backend.so')  
                 lib.delete_file.argtypes = [ctypes.c_char_p]
                 lib.delete_file.restype = ctypes.c_bool
 
@@ -822,7 +943,6 @@ class FileOrganizerApp:
                 success = lib.delete_file(path)
                 if success:
                     self.root.after(0, lambda: self.update_status(f"Deleted {file_info['name']}"))
-                    # Refresh current directory
                     self.root.after(0, lambda: self.load_directory(self.current_dir))
                 else:
                     self.root.after(0, lambda: messagebox.showerror("Error", "Failed to delete file"))
@@ -834,41 +954,34 @@ class FileOrganizerApp:
                 messagebox.showinfo("Info", "No file selected")
                 return
             file_info = self.selected_file
-            # Open file location in explorer
             try:
-                if os.name == "nt":  # Windows
+                if os.name == "nt":  
                     os.system(f'explorer /select,"{file_info["path"]}"')
-                elif os.name == "posix":  # macOS and Linux
+                elif os.name == "posix":  
                     os.system(f'open -R "{file_info["path"]}"')
             except Exception as e:
                 messagebox.showerror("Error", f"Could not locate file: {str(e)}")
 
         def organize_by_date(self):
-            # Ask for destination
             destination = filedialog.askdirectory(title="Select Destination Folder (leave empty to organize in place)")
             if destination == "":
                 destination = self.current_dir
-            # Confirm organization
             if not messagebox.askyesno("Confirm Organization",
                                     f"Are you sure you want to organize files by date in {destination}?"):
                 return
-            # Organize files using the C/C++ backend
             threading.Thread(target=self._organize_by_date_backend, args=(destination,), daemon=True).start()
 
         def _organize_by_date_backend(self, destination):
             try:
-                # Call the C/C++ shared library to organize files by date
-                lib = ctypes.CDLL('./file_organizer_backend.so')  # Path to compiled C/C++ library
+                lib = ctypes.CDLL('./file_organizer_backend.so') 
                 lib.organize_by_date.argtypes = [ctypes.c_char_p]
                 lib.organize_by_date.restype = ctypes.c_bool
 
                 success = lib.organize_by_date(destination.encode('utf-8'))
                 if success:
                     self.root.after(0, lambda: messagebox.showinfo("Success", f"Files organized by date in {destination}"))
-                    # Refresh if organizing in current directory
                     if destination == self.current_dir:
                         self.root.after(0, lambda: self.load_directory(self.current_dir))
-                    # Update status
                     self.root.after(0, lambda: self.update_status(f"Organized files by date in {destination}"))
                 else:
                     self.root.after(0, lambda: messagebox.showerror("Error", "Failed to organize files by date"))
@@ -876,45 +989,35 @@ class FileOrganizerApp:
                 self.root.after(0, lambda: messagebox.showerror("Error", f"Could not organize files: {str(e)}"))
 
         def organize_by_type(self):
-            # Ask for destination
             destination = filedialog.askdirectory(title="Select Destination Folder (leave empty to organize in place)")
             if destination == "":
                 destination = self.current_dir
-            # Confirm organization
             if not messagebox.askyesno("Confirm Organization",
                                     f"Are you sure you want to organize files by type in {destination}?"):
                 return
-            # Organize files using the C/C++ backend
             threading.Thread(target=self._organize_by_type_backend, args=(destination,), daemon=True).start()
 
         def _organize_by_type_backend(self, destination):
             try:
-                # Call the C/C++ shared library to organize files by type
-                lib = ctypes.CDLL('./file_organizer_backend.so')  # Path to compiled C/C++ library
+                lib = ctypes.CDLL('./file_organizer_backend.so')  
                 lib.organize_by_type.argtypes = [ctypes.c_char_p]
                 lib.organize_by_type.restype = ctypes.c_bool
 
                 success = lib.organize_by_type(destination.encode('utf-8'))
                 if success:
                     self.root.after(0, lambda: messagebox.showinfo("Success", f"Files organized by type in {destination}"))
-                    # Refresh if organizing in current directory
                     if destination == self.current_dir:
                         self.root.after(0, lambda: self.load_directory(self.current_dir))
-                    # Update status
                     self.root.after(0, lambda: self.update_status(f"Organized files by type in {destination}"))
                 else:
                     self.root.after(0, lambda: messagebox.showerror("Error", "Failed to organize files by type"))
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror("Error", f"Could not organize files: {str(e)}"))
 
-# [All your existing code remains the same until the very end...]
 
-# Add this at the very bottom of your file:
 if __name__ == "__main__":
-    # Create the root window
     root = tk.Tk()
     
-    # Create the application instance
     app = FileOrganizerApp(root)
     
     # Start the main event loop
